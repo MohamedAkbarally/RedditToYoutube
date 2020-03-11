@@ -1,5 +1,5 @@
-raw/
-node_modules/
-!output.mp4
-!thumbnail.png
-mypython/
+/Resources
+/raw
+/output
+/mypython
+!config.py

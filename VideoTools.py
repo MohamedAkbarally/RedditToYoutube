@@ -3,7 +3,10 @@ from moviepy.video.fx.all import loop, freeze
 from TextToImage import textToImage
 from TextToSpeech import textToSpeech
 from texsplit import textsplit
+from PIL import Image, ImageFont, ImageDraw
+import boto3
 
+#image sequence for OP talking animation
 img_OP = []
 for x in range(0, 14):
     if x >9:
@@ -11,6 +14,7 @@ for x in range(0, 14):
     else:
         img_OP.append("./Resources/OP_img/helo000"+str(x)+".png")
 
+#image sequence for User talking animation
 img_User = []
 for x in range(0, 14):
     if x >9:
@@ -21,51 +25,115 @@ for x in range(0, 14):
 OP_img_sequence = ImageSequenceClip(img_OP, fps=24)
 User_img_sequence = ImageSequenceClip(img_User, fps=24)
 
+def createTextClip(isOP,comment_no,body):
+    """returns a videoclip object for either a question or an answer
 
-text = "A dramatic headline, I know, but my fuck has been a struggle to say the least. I‘m 32 now. In my early teens, my parents were in the process of a contentious and incredibly difficult separation when I was diagnosed with leukemia. They stayed together while I recovered, then completed their divorce as soon as I was in remission. The upheaval of all those years left me with anorexia, which has been a constant companion ever since. My leukemia came back in college and I came close to dying. Miraculously, I’m still here, but in the intervening years I’ve needed a kidney transplant, and anorexia is still something I live with. I’m on disability, have never finished college, and have never come close to building anything resembling a career. Quite a downer, right? Nevertheless, I have moments of happiness and contentment and I’m doing my best to have a life that means something to me despite my problems. Ask me anything."
-def createClip(id,index,body):
+        Parameters
+        ----------
+        isOP : boolean
+            0 is a user comment, 1 is an OP comment
+        
+        comment_no : int
+            reference to which folder to store raw assets
+        
+        body : str
+            the text to be displayed in the video clip
+    """
     videoclips = []
-    splitText = textsplit(body)
-    iteration = 0
-    last_iteration = len(splitText[0])-1
 
+    #splits texts into pages and segments
+    splitText = textsplit(body)
+
+    iteration = 0
     for i in range(len(splitText[0])):
+
+        #full text stores the entire text to be displayed on the screen
         fulltext = ""
+        
+        #totaltext stores the entire text stored on one page
         totaltext = "".join(splitText[0][i])
+        
         for j in range(len(splitText[0][i])):
             video_clip = []
             phrase_img = splitText[0][i][j]
             phrase_polly = splitText[1][i][j]
 
+            #check if the phrase is blank
             if phrase_img.strip() == "":
                 continue
-            fulltext = fulltext+phrase_img
-
-            elipseTop = textToImage(fulltext, id, id=="1", str(index),str(iteration),totaltext)
             
+            fulltext = fulltext+phrase_img
+            
+            #create image for text
+            imageTop = textToImage(fulltext, isOP, str(comment_no),str(iteration),totaltext)
 
-
-            image_clip = ImageClip("./raw/"+str(index)+"/"+id+"_"+str(iteration)+".png")
-            audio_clip = textToSpeech(phrase_polly, id, str(index),str(iteration))
-            print(phrase_polly)
+            #loads image created
+            image_clip = ImageClip("./raw/"+str(comment_no)+"/"+str(isOP)+"_"+str(iteration)+".png")
+            
+            #creates audio clips for text
+            audio_clip = textToSpeech(phrase_polly, isOP, str(comment_no),str(iteration))
             video_clip = image_clip.set_duration(audio_clip.duration)
-            if (id == "0"):
+
+            #adds talking head to video clip
+            if not isOP:
                 img_sequence_loop = loop(User_img_sequence,duration=audio_clip.duration)
             else: 
                 img_sequence_loop = loop(OP_img_sequence,duration=audio_clip.duration)
-
-            #img_sequence_loop = freeze(img_sequence_loop, t="end",freeze_duration=0.5)
-            img_sequence_loop = img_sequence_loop.set_position((744,elipseTop-77+23))
+            img_sequence_loop = img_sequence_loop.set_position((744,imageTop-77+23))
             video_clip = CompositeVideoClip([video_clip,img_sequence_loop])
+
+            #adds audio to video clip
             video_clip.audio = audio_clip
 
             videoclips.append(video_clip)
             iteration+=1
 
-    #video_clip = freeze(video_clip,freeze_duration=0.5)
-    final_clip = concatenate_videoclips(videoclips)
 
-    #final_clip.write_videofile("output.mp4",fps=24)
+    final_clip = concatenate_videoclips(videoclips)
     return final_clip
 
-#print(textsplit(text))
+def createTitle(episode):
+    """returns a video clip object of the intro to the relavant episode
+
+        Parameters
+        ----------
+        episode : int
+            the episode number of the video
+
+    """
+    img = Image.open("./Resources/backgrouda.png")
+    font = ImageFont.truetype("./Resources/OpenSans-Semibold.ttf", 300)    
+    
+    #canvas
+    draw = ImageDraw.Draw(img)
+
+    w, h = draw.textsize("EP."+format(episode, '02'), font=font)
+
+    #draw episode text and shadow
+    draw.text(((1920-w)/2, (1080-h)/2-40),"EP."+format(episode, '02'),(0,0,0),font=font,align='center')
+    draw.text(((1920-w)/2, (1080-h)/2-48),"EP."+format(episode, '02'),(255,355,255),font=font,align='center')
+    
+    #save image
+    filename = "./raw/title/title.png"
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    img.save(filename)
+
+    #save audio for intro
+    polly = boto3.client('polly')
+    spoken_text = polly.synthesize_speech(Text="<speak><break time=\"0.5s\"/><prosody rate=\"slow\">Reddit Ask Me Anything, Episode "+str(episode)+"</prosody><break time=\"0.2s\"/></speak>",
+                                            OutputFormat='mp3',
+                                            VoiceId="Salli", TextType='ssml')
+
+    filename = "./raw/title/title.mp3"
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    with open(filename, 'wb') as f:
+        f.write(spoken_text['AudioStream'].read())
+        f.close()
+
+    #contructing videoclip object
+    image_clip = ImageClip("./raw/title/title.png")
+    audio_clip = AudioFileClip("./raw/title/title.mp3")
+    video_clip = image_clip.set_duration(audio_clip.duration)
+    video_clip.audio = audio_clip
+
+    return video_clip
